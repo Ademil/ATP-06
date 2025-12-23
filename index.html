@@ -1,0 +1,292 @@
+
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Eng. Assistente IA - Premium Sênior</title>
+    
+    <!-- Tailwind CSS para Estilização -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Import Map para Módulos via ESM -->
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.344.0",
+    "jspdf": "https://esm.sh/jspdf@2.5.1",
+    "@google/genai": "https://esm.sh/@google/genai@1.3.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/"
+  }
+}
+</script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+        
+        body { 
+            font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            background-color: #f8fafc;
+            user-select: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .glass-header {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+        }
+
+        .tab-bar {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+        }
+
+        .animate-pop {
+            animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes popIn {
+            0% { opacity: 0; transform: scale(0.96) translateY(10px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+        /* Estilos de botões para feedback tátil */
+        .btn-active:active { transform: scale(0.95); opacity: 0.9; }
+    </style>
+</head>
+<body class="antialiased">
+    <div id="root"></div>
+
+    <script type="module">
+        import React, { useState, useEffect, useRef, useMemo } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            LayoutDashboard, MessageSquare, BookOpen, Plus, Send, 
+            FileUp, ShieldCheck, HardHat, Download, Search, 
+            Loader2, LogOut, ChevronRight, AlertTriangle 
+        } from 'lucide-react';
+        import { jsPDF } from 'jspdf';
+        import { GoogleGenAI } from '@google/genai';
+
+        // --- Constantes e Tipos ---
+        const NBR_DATA = [
+            { id: '6118', name: 'NBR-6118', description: 'Projeto de estruturas de concreto - Procedimento' },
+            { id: '6120', name: 'NBR-6120', description: 'Cargas para o cálculo de estruturas de edificações' },
+            { id: '6122', name: 'NBR-6122', description: 'Projeto e execução de fundações' },
+            { id: '6123', name: 'NBR-6123', description: 'Forças devidas ao vento em edificações' },
+            { id: '8681', name: 'NBR-8681', description: 'Ações e segurança nas estruturas - Procedimento' }
+        ];
+
+        // --- Componente Principal ---
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [messages, setMessages] = useState([]);
+            const [inputValue, setInputValue] = useState('');
+            const [isTyping, setIsTyping] = useState(false);
+            const [pdfBase64, setPdfBase64] = useState(null);
+            const [analysisResult, setAnalysisResult] = useState(null);
+            const [currentNbrContext, setCurrentNbrContext] = useState(null);
+            const [searchQuery, setSearchQuery] = useState('');
+            const chatEndRef = useRef(null);
+
+            const scrollToBottom = () => {
+                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+
+            useEffect(() => {
+                scrollToBottom();
+            }, [messages, isTyping]);
+
+            // --- Lógica Gemini ---
+            const callGemini = async (msgs, instruction) => {
+                const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
+                if (!apiKey) return "ERRO: Chave de API não configurada.";
+
+                const ai = new GoogleGenAI({ apiKey });
+                const contents = msgs.map(m => ({
+                    role: m.role === 'user' ? 'user' : 'model',
+                    parts: [{ text: m.content }]
+                }));
+
+                try {
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-3-flash-preview',
+                        contents: contents,
+                        config: {
+                            systemInstruction: instruction + " Responda em Português-BR. Seja técnico. Use negrito para pontos críticos. Evite LaTeX.",
+                            temperature: 0.7
+                        }
+                    });
+                    return response.text || "Sem resposta.";
+                } catch (err) {
+                    console.error(err);
+                    return "Erro na conexão com a inteligência normativa.";
+                }
+            };
+
+            const handleSendMessage = async () => {
+                if (!inputValue.trim() || isTyping) return;
+
+                const userMsg = { role: 'user', content: inputValue };
+                setMessages(prev => [...prev, userMsg]);
+                setInputValue('');
+                setIsTyping(true);
+
+                const sysPrompt = `Você é o Engº Assistente IA Sênior. ${currentNbrContext ? 'Foco na norma ' + currentNbrContext : ''}`;
+                const response = await callGemini([...messages, userMsg], sysPrompt);
+                
+                setMessages(prev => [...prev, { role: 'assistant', content: response }]);
+                setIsTyping(false);
+            };
+
+            const exportToPdf = (text) => {
+                const doc = new jsPDF();
+                const sanitized = text.replace(/[*#$_\\]/g, '');
+                doc.setFillColor(37, 99, 235);
+                doc.rect(0, 0, 210, 40, 'F');
+                doc.setTextColor(255, 255, 255);
+                doc.setFontSize(16);
+                doc.text('LAUDO TÉCNICO ESTRUTURAL IA', 20, 20);
+                doc.setFontSize(8);
+                doc.text(`Gerado em: ${new Date().toLocaleString()}`, 20, 30);
+                doc.setTextColor(40, 40, 40);
+                doc.setFontSize(10);
+                const lines = doc.splitTextToSize(sanitized, 170);
+                doc.text(lines, 20, 55);
+                doc.save(`Parecer_Tecnico_${Date.now()}.pdf`);
+            };
+
+            const filteredNbrs = useMemo(() => {
+                return NBR_DATA.filter(n => n.name.toLowerCase().includes(searchQuery.toLowerCase()));
+            }, [searchQuery]);
+
+            return React.createElement('div', { className: 'flex flex-col h-screen max-w-md mx-auto bg-slate-50 border-x border-slate-200 shadow-2xl overflow-hidden relative' },
+                // Header
+                React.createElement('header', { className: 'glass-header px-6 py-5 flex items-center justify-between sticky top-0 z-[100]' },
+                    React.createElement('div', { className: 'flex items-center gap-3' },
+                        React.createElement('div', { className: 'bg-blue-600 p-2.5 rounded-2xl text-white shadow-lg' }, React.createElement(HardHat, { size: 20 })),
+                        React.createElement('div', null,
+                            React.createElement('h1', { className: 'font-black text-slate-800 text-xs tracking-tight uppercase' }, 'Eng. Assistente'),
+                            React.createElement('div', { className: 'flex items-center gap-1 mt-0.5' },
+                                React.createElement('span', { className: 'w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse' }),
+                                React.createElement('p', { className: 'text-[9px] text-slate-400 font-bold uppercase tracking-widest' }, currentNbrContext || 'Online')
+                            )
+                        )
+                    ),
+                    React.createElement('button', { onClick: () => window.location.reload(), className: 'p-2 text-slate-300 hover:text-red-500 transition-colors' }, React.createElement(LogOut, { size: 18 }))
+                ),
+
+                // Conteúdo Principal
+                React.createElement('main', { className: 'flex-1 overflow-y-auto p-6 pb-32 scrollbar-hide' },
+                    activeTab === 'dashboard' && React.createElement('div', { className: 'space-y-8 animate-pop' },
+                        React.createElement('div', { className: 'bg-gradient-to-br from-blue-600 to-indigo-900 rounded-[40px] p-8 text-white shadow-2xl' },
+                            React.createElement('h2', { className: 'text-2xl font-black' }, 'Engº. Ademilton'),
+                            React.createElement('p', { className: 'text-blue-100/70 text-xs mt-1 font-bold tracking-widest uppercase' }, 'Calculista Estrutural'),
+                            React.createElement('div', { className: 'mt-10 grid grid-cols-2 gap-4' },
+                                React.createElement('div', { className: 'bg-white/10 p-5 rounded-3xl border border-white/10' },
+                                    React.createElement('span', { className: 'block text-[10px] opacity-60 uppercase font-black' }, 'Análises'),
+                                    React.createElement('span', { className: 'text-3xl font-bold' }, '142')
+                                ),
+                                React.createElement('div', { className: 'bg-white/10 p-5 rounded-3xl border border-white/10' },
+                                    React.createElement('span', { className: 'block text-[10px] opacity-60 uppercase font-black' }, 'Normas'),
+                                    React.createElement('span', { className: 'text-3xl font-bold' }, '05')
+                                )
+                            )
+                        ),
+                        React.createElement('section', { className: 'grid grid-cols-2 gap-5' },
+                            React.createElement('button', { onClick: () => setActiveTab('assistant'), className: 'bg-white p-7 rounded-[35px] shadow-sm border border-slate-100 flex flex-col items-center gap-4 btn-active' },
+                                React.createElement('div', { className: 'p-4 bg-blue-50 text-blue-600 rounded-2xl' }, React.createElement(MessageSquare, { size: 28 })),
+                                React.createElement('span', { className: 'text-xs font-black text-slate-700' }, 'Chat Técnico')
+                            ),
+                            React.createElement('button', { onClick: () => setActiveTab('projects'), className: 'bg-white p-7 rounded-[35px] shadow-sm border border-slate-100 flex flex-col items-center gap-4 btn-active' },
+                                React.createElement('div', { className: 'p-4 bg-indigo-50 text-indigo-600 rounded-2xl' }, React.createElement(FileUp, { size: 28 })),
+                                React.createElement('span', { className: 'text-xs font-black text-slate-700' }, 'Audit. PDF')
+                            )
+                        )
+                    ),
+
+                    activeTab === 'assistant' && React.createElement('div', { className: 'flex flex-col h-full animate-pop' },
+                        React.createElement('div', { className: 'flex-1 space-y-6 mb-4 overflow-y-auto pr-2 scrollbar-hide' },
+                            messages.length === 0 ? React.createElement('div', { className: 'my-auto text-center px-8 opacity-40' },
+                                React.createElement(MessageSquare, { size: 48, className: 'mx-auto mb-4' }),
+                                React.createElement('p', { className: 'text-xs font-bold' }, 'Inicie uma consulta técnica sobre a NBR-6118')
+                            ) : messages.map((m, i) => React.createElement('div', { key: i, className: `flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}` },
+                                React.createElement('div', { className: `max-w-[90%] p-5 rounded-[28px] text-[13px] leading-relaxed relative ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white border border-slate-100 text-slate-700 rounded-tl-none'}` },
+                                    m.content,
+                                    m.role === 'assistant' && React.createElement('button', { onClick: () => exportToPdf(m.content), className: 'absolute -bottom-2 -right-2 bg-white p-2 rounded-full shadow-lg text-blue-600 btn-active' }, React.createElement(Download, { size: 14 }))
+                                )
+                            )),
+                            isTyping && React.createElement('div', { className: 'flex items-center gap-3 bg-white p-4 rounded-[24px] border border-slate-50 w-fit animate-pulse' },
+                                React.createElement(Loader2, { size: 16, className: 'animate-spin text-blue-600' }),
+                                React.createElement('span', { className: 'text-[10px] font-black text-slate-400' }, 'CONSULTANDO NBR...')
+                            ),
+                            React.createElement('div', { ref: chatEndRef })
+                        ),
+                        React.createElement('div', { className: 'sticky bottom-0 bg-white border border-slate-200 rounded-[28px] p-2 flex items-center gap-2 shadow-2xl mb-4' },
+                            React.createElement('input', { 
+                                type: 'text', value: inputValue, 
+                                onChange: (e) => setInputValue(e.target.value), 
+                                onKeyDown: (e) => e.key === 'Enter' && handleSendMessage(),
+                                placeholder: 'Dúvida técnica...', 
+                                className: 'flex-1 bg-transparent px-4 py-3 text-sm outline-none' 
+                            }),
+                            React.createElement('button', { onClick: handleSendMessage, className: 'bg-blue-600 p-4 rounded-[22px] text-white btn-active shadow-blue-200' }, React.createElement(Send, { size: 18 }))
+                        )
+                    ),
+
+                    activeTab === 'nbrs' && React.createElement('div', { className: 'space-y-6 animate-pop' },
+                        React.createElement('div', { className: 'relative' },
+                            React.createElement(Search, { className: 'absolute left-4 top-1/2 -translate-y-1/2 text-slate-300', size: 18 }),
+                            React.createElement('input', { 
+                                type: 'text', value: searchQuery, 
+                                onChange: (e) => setSearchQuery(e.target.value), 
+                                placeholder: 'Pesquisar norma...', 
+                                className: 'w-full bg-white border border-slate-100 rounded-3xl pl-12 pr-6 py-4 text-sm outline-none' 
+                            })
+                        ),
+                        React.createElement('div', { className: 'grid grid-cols-1 gap-4' },
+                            filteredNbrs.map(n => React.createElement('div', { key: n.id, className: 'bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm active:scale-98 transition-transform' },
+                                React.createElement('div', { className: 'flex justify-between mb-4' },
+                                    React.createElement('span', { className: 'bg-blue-50 text-blue-600 text-[10px] font-black px-3 py-1 rounded-full' }, n.id),
+                                    React.createElement(BookOpen, { size: 16, className: 'text-slate-200' })
+                                ),
+                                React.createElement('h4', { className: 'font-black text-slate-800 text-sm' }, n.name),
+                                React.createElement('p', { className: 'text-[11px] text-slate-400 mt-1 mb-5' }, n.description),
+                                React.createElement('button', { onClick: () => { setCurrentNbrContext(n.name); setActiveTab('assistant'); }, className: 'w-full bg-slate-900 text-white text-[10px] font-black py-4 rounded-2xl uppercase tracking-widest' }, 'Ativar Modo Especialista')
+                            ))
+                        )
+                    )
+                ),
+
+                // Tab Bar inferior
+                React.createElement('nav', { className: 'fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-[360px] tab-bar px-8 py-5 flex justify-between items-center rounded-[40px] shadow-2xl z-[100] safe-bottom' },
+                    React.createElement('button', { onClick: () => setActiveTab('dashboard'), className: `p-2 ${activeTab === 'dashboard' ? 'text-blue-600 scale-125' : 'text-slate-300'}` }, React.createElement(LayoutDashboard, { size: 24 })),
+                    React.createElement('button', { onClick: () => setActiveTab('assistant'), className: `p-2 ${activeTab === 'assistant' ? 'text-blue-600 scale-125' : 'text-slate-300'}` }, React.createElement(MessageSquare, { size: 24 })),
+                    React.createElement('button', { onClick: () => setActiveTab('projects'), className: 'flex flex-col items-center' },
+                        React.createElement('div', { className: `p-4.5 rounded-[24px] -mt-14 shadow-2xl transition-all ${activeTab === 'projects' ? 'bg-blue-600 text-white rotate-12' : 'bg-slate-900 text-white'}` }, React.createElement(Plus, { size: 28 }))
+                    ),
+                    React.createElement('button', { onClick: () => setActiveTab('nbrs'), className: `p-2 ${activeTab === 'nbrs' ? 'text-blue-600 scale-125' : 'text-slate-300'}` }, React.createElement(BookOpen, { size: 24 }))
+                )
+            );
+        };
+
+        // Renderização Inicial
+        const root = createRoot(document.getElementById('root'));
+        root.render(React.createElement(App));
+    </script>
+</body>
+</html>
